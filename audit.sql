@@ -80,7 +80,6 @@ COMMENT ON COLUMN audit.logged_actions.statement_only IS '''t'' if audit event i
 CREATE INDEX logged_actions_relid_idx ON audit.logged_actions(relid);
 CREATE INDEX logged_actions_action_tstamp_tx_stm_idx ON audit.logged_actions(action_tstamp_stm);
 CREATE INDEX logged_actions_action_idx ON audit.logged_actions(action);
-CREATE INDEX logged_actions_row_data_idx ON audit.logged_actions(row_data);
 
 CREATE OR REPLACE FUNCTION audit.if_modified_func() RETURNS TRIGGER AS $body$
 DECLARE

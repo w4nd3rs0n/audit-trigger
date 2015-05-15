@@ -1,5 +1,5 @@
 ------------------------------------------------------------------------
--- CREATE TRIGGERS
+-- CREATE TRIGGERS & ENABLE TRIGGERS
 ------------------------------------------------------------------------
 -- TRUNCATE
 select 'DROP TRIGGER IF EXISTS audit_trigger_stm ON '||table_name|| '; CREATE TRIGGER audit_trigger_stm AFTER TRUNCATE ON '||table_name|| ' FOR EACH STATEMENT EXECUTE PROCEDURE audit.if_modified_func(''true''); ALTER TABLE '||table_name||' ENABLE TRIGGER audit_trigger_stm;' 

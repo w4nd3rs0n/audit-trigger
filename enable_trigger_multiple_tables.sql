@@ -17,3 +17,13 @@ from information_schema.tables where table_schema = 'public' and table_name ilik
 
 select 'ALTER TABLE '||table_name||' ENABLE TRIGGER audit_trigger_stm_row;'
 from information_schema.tables where table_schema = 'public' and table_name ilike 'tb_%';
+
+
+------------------------------------------------------------------------
+-- DISABLE TRIGGERS
+------------------------------------------------------------------------
+select 'ALTER TABLE '||table_name||' DISABLE TRIGGER audit_trigger_stm;'
+from information_schema.tables where table_schema = 'public' and table_name ilike 'tb_%';
+
+select 'ALTER TABLE '||table_name||' DISABLE TRIGGER audit_trigger_stm_row;'
+from information_schema.tables where table_schema = 'public' and table_name ilike 'tb_%';

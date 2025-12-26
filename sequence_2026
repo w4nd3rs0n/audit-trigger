@@ -1,1 +1,343 @@
 
+CREATE OR REPLACE FUNCTION audit.if_modified_func() RETURNS TRIGGER AS $body$
+DECLARE
+    audit_row audit.logged_actions;
+    include_values boolean;
+    log_diffs boolean;
+    h_old hstore;
+    h_new hstore;
+    excluded_cols text[] = ARRAY[]::text[];
+BEGIN
+    IF TG_WHEN <> 'AFTER' THEN
+        RAISE EXCEPTION 'audit.if_modified_func() may only run as an AFTER trigger';
+    END IF;
+
+    audit_row = ROW(
+        nextval('audit.logged_actions_event_id_seq'), -- event_id
+        TG_TABLE_SCHEMA::text,                        -- schema_name
+        TG_TABLE_NAME::text,                          -- table_name
+        TG_RELID,                                     -- relation OID for much quicker searches
+        session_user::text,                           -- session_user_name
+        current_timestamp,                            -- action_tstamp_tx
+        statement_timestamp(),                        -- action_tstamp_stm
+        clock_timestamp(),                            -- action_tstamp_clk
+        txid_current(),                               -- transaction ID
+        current_setting('application_name'),          -- client application
+        inet_client_addr(),                           -- client_addr
+        inet_client_port(),                           -- client_port
+        current_query(),                              -- top-level query or queries (if multistatement) from client
+        substring(TG_OP,1,1),                         -- action
+        NULL, NULL,                                   -- row_data, changed_fields
+        'f'                                           -- statement_only
+        );
+
+    IF NOT TG_ARGV[0]::boolean IS DISTINCT FROM 'f'::boolean THEN
+        audit_row.client_query = NULL;
+    END IF;
+
+    IF TG_ARGV[1] IS NOT NULL THEN
+        excluded_cols = TG_ARGV[1]::text[];
+    END IF;
+    
+    IF (TG_OP = 'UPDATE' AND TG_LEVEL = 'ROW') THEN
+        audit_row.row_data = hstore(OLD.*);
+        audit_row.changed_fields =  (hstore(NEW.*) - audit_row.row_data) - excluded_cols;
+        IF audit_row.changed_fields = hstore('') THEN
+            -- All changed fields are ignored. Skip this update.
+            RETURN NULL;
+        END IF;
+    ELSIF (TG_OP = 'DELETE' AND TG_LEVEL = 'ROW') THEN
+        audit_row.row_data = hstore(OLD.*) - excluded_cols;
+    ELSIF (TG_OP = 'INSERT' AND TG_LEVEL = 'ROW') THEN
+        audit_row.row_data = hstore(NEW.*) - excluded_cols;
+    ELSIF (TG_LEVEL = 'STATEMENT' AND TG_OP IN ('INSERT','UPDATE','DELETE','TRUNCATE')) THEN
+        audit_row.statement_only = 't';
+    ELSE
+        RAISE EXCEPTION '[audit.if_modified_func] - Trigger func added as trigger for unhandled case: %, %',TG_OP, TG_LEVEL;
+        RETURN NULL;
+    END IF;
+    INSERT INTO audit.logged_actions VALUES (audit_row.*);
+    RETURN NULL;
+END;
+$body$
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, public;
+
+
+
+
+CREATE OR REPLACE FUNCTION audit.audit_table(target_table regclass, audit_rows boolean, audit_query_text boolean, ignored_cols text[]) RETURNS void AS $body$
+DECLARE
+  stm_targets text = 'INSERT OR UPDATE OR DELETE OR TRUNCATE';
+  _q_txt text;
+  _ignored_cols_snip text = '';
+BEGIN
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_row ON ' || target_table;
+    EXECUTE 'DROP TRIGGER IF EXISTS audit_trigger_stm ON ' || target_table;
+
+    IF audit_rows THEN
+        IF array_length(ignored_cols,1) > 0 THEN
+            _ignored_cols_snip = ', ' || quote_literal(ignored_cols);
+        END IF;
+        _q_txt = 'CREATE TRIGGER audit_trigger_row AFTER INSERT OR UPDATE OR DELETE ON ' || 
+                 target_table || 
+                 ' FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func(' ||
+                 quote_literal(audit_query_text) || _ignored_cols_snip || ');';
+        RAISE NOTICE '%',_q_txt;
+        EXECUTE _q_txt;
+        stm_targets = 'TRUNCATE';
+    ELSE
+    END IF;
+
+    _q_txt = 'CREATE TRIGGER audit_trigger_stm AFTER ' || stm_targets || ' ON ' ||
+             target_table ||
+             ' FOR EACH STATEMENT EXECUTE PROCEDURE audit.if_modified_func('||
+             quote_literal(audit_query_text) || ');';
+    RAISE NOTICE '%',_q_txt;
+    EXECUTE _q_txt;
+
+END;
+$body$
+language 'plpgsql';
+
+
+-- Pg doesn't allow variadic calls with 0 params, so provide a wrapper
+CREATE OR REPLACE FUNCTION audit.audit_table(target_table regclass, audit_rows boolean, audit_query_text boolean) RETURNS void AS $body$
+SELECT audit.audit_table($1, $2, $3, ARRAY[]::text[]);
+$body$ LANGUAGE SQL;
+
+
+CREATE OR REPLACE FUNCTION audit.audit_table(target_table regclass) RETURNS void AS $$
+SELECT audit.audit_table($1, BOOLEAN 't', BOOLEAN 't');
+$$ LANGUAGE 'sql';
+
+COMMENT ON FUNCTION audit.audit_table(regclass) IS $body$
+Add auditing support to the given table. Row-level changes will be logged with full client query text. No cols are ignored.
+$body$;
+
+-- PARTE 01
+
+CREATE TABLE audit.logged_actions_202601() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202602() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202603() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202604() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202605() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202606() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202607() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202608() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202609() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202610() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202611() INHERITS (audit.logged_actions);
+CREATE TABLE audit.logged_actions_202612() INHERITS (audit.logged_actions);
+
+ALTER TABLE audit.logged_actions_202601 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-01-01' AND action_tstamp_stm < DATE '2026-02-01' );
+ALTER TABLE audit.logged_actions_202602 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-02-01' AND action_tstamp_stm < DATE '2026-03-01' );
+ALTER TABLE audit.logged_actions_202603 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-03-01' AND action_tstamp_stm < DATE '2026-04-01' );
+ALTER TABLE audit.logged_actions_202604 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-04-01' AND action_tstamp_stm < DATE '2026-05-01' );
+ALTER TABLE audit.logged_actions_202605 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-05-01' AND action_tstamp_stm < DATE '2026-06-01' );
+ALTER TABLE audit.logged_actions_202606 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-06-01' AND action_tstamp_stm < DATE '2026-07-01' );
+ALTER TABLE audit.logged_actions_202607 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-07-01' AND action_tstamp_stm < DATE '2026-08-01' );
+ALTER TABLE audit.logged_actions_202608 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-08-01' AND action_tstamp_stm < DATE '2026-09-01' );
+ALTER TABLE audit.logged_actions_202609 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-09-01' AND action_tstamp_stm < DATE '2026-10-01' );
+ALTER TABLE audit.logged_actions_202610 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-10-01' AND action_tstamp_stm < DATE '2026-11-01' );
+ALTER TABLE audit.logged_actions_202611 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-11-01' AND action_tstamp_stm < DATE '2026-12-01' );
+ALTER TABLE audit.logged_actions_202612 ADD CONSTRAINT check_date CHECK ( action_tstamp_stm >= DATE '2026-12-01' AND action_tstamp_stm < DATE '2026-01-01' );
+
+
+
+
+
+
+
+
+
+
+
+CREATE INDEX IF NOT EXISTS logged_actions_202604_usuario_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_art_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_action_idx ON audit.logged_actions_202612 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202605_transaction_id_idx ON audit.logged_actions_202605 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202609_empresa_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'empresa_id'));
+ALTER TABLE audit.logged_actions_202605 ADD CONSTRAINT logged_actions_202605_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202605_schema_name_idx ON audit.logged_actions_202605 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202610_table_name_idx ON audit.logged_actions_202610 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202603_certidao_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202605_action_idx ON audit.logged_actions_202605 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202607_pessoa_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202605_profissional_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_data_tstamp_idx ON audit.logged_actions_202610 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_session_user_name_idx ON audit.logged_actions_202608 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202604_certidao_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_data_tstamp_idx ON audit.logged_actions_202611 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_profissional_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_certidao_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_schema_name_idx ON audit.logged_actions_202601 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202612_data_tstamp_idx ON audit.logged_actions_202612 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202609_boleto_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_table_name_idx ON audit.logged_actions_202603 USING btree (table_name COLLATE pg_catalog."default");
+ALTER TABLE audit.logged_actions_202610 ADD CONSTRAINT logged_actions_202610_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202608_pessoa_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_action_idx ON audit.logged_actions_202601 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202608_boleto_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_certidao_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_profissional_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202605_art_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_table_name_idx ON audit.logged_actions_202601 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202606_certidao_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_action_idx ON audit.logged_actions_202611 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202606_art_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_usuario_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_data_tstamp_idx ON audit.logged_actions_202603 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202609_transaction_id_idx ON audit.logged_actions_202609 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202605_usuario_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_table_name_idx ON audit.logged_actions_202612 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202605_pessoa_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_art_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_session_user_name_idx ON audit.logged_actions_202603 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202607_usuario_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_table_name_idx ON audit.logged_actions_202611 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202601_data_tstamp_idx ON audit.logged_actions_202601 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202604_transaction_id_idx ON audit.logged_actions_202604 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202609_pessoa_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_empresa_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_certidao_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_data_tstamp_idx ON audit.logged_actions_202608 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_empresa_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_action_idx ON audit.logged_actions_202603 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202605_boleto_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_schema_name_idx ON audit.logged_actions_202612 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202604_table_name_idx ON audit.logged_actions_202604 USING btree (table_name COLLATE pg_catalog."default");
+ALTER TABLE audit.logged_actions_202601 ADD CONSTRAINT logged_actions_202601_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202605_table_name_idx ON audit.logged_actions_202605 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202601_transaction_id_idx ON audit.logged_actions_202601 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202604_session_user_name_idx ON audit.logged_actions_202604 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202609_usuario_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_row_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_schema_name_idx ON audit.logged_actions_202608 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202607_empresa_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_table_name_idx ON audit.logged_actions_202608 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202609_certidao_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_art_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_data_tstamp_idx ON audit.logged_actions_202602 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_transaction_id_idx ON audit.logged_actions_202610 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202602_row_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_pessoa_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_usuario_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_profissional_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202607_schema_name_idx ON audit.logged_actions_202607 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202608_empresa_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202605_data_tstamp_idx ON audit.logged_actions_202605 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_transaction_id_idx ON audit.logged_actions_202606 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202611_boleto_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_schema_name_idx ON audit.logged_actions_202611 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202602_session_user_name_idx ON audit.logged_actions_202602 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202604_row_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_table_name_idx ON audit.logged_actions_202602 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202608_profissional_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_action_idx ON audit.logged_actions_202602 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202607_row_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_session_user_name_idx ON audit.logged_actions_202612 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202603_profissional_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_art_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_profissional_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202604_empresa_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_pessoa_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_empresa_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_usuario_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_transaction_id_idx ON audit.logged_actions_202612 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202611_transaction_id_idx ON audit.logged_actions_202611 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202612_pessoa_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_certidao_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202609_row_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_row_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_boleto_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_certidao_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_row_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_action_idx ON audit.logged_actions_202610 USING btree (action ASC NULLS LAST);
+ALTER TABLE audit.logged_actions_202602 ADD CONSTRAINT logged_actions_202602_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202611_profissional_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_usuario_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202607_table_name_idx ON audit.logged_actions_202607 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202601_art_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_pessoa_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202607_art_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_boleto_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202604_data_tstamp_idx ON audit.logged_actions_202604 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202609_schema_name_idx ON audit.logged_actions_202609 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202605_row_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202609_data_tstamp_idx ON audit.logged_actions_202609 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202612_empresa_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_schema_name_idx ON audit.logged_actions_202606 USING btree (schema_name COLLATE pg_catalog."default");
+ALTER TABLE audit.logged_actions_202608 ADD CONSTRAINT logged_actions_202608_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202603_usuario_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_empresa_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_transaction_id_idx ON audit.logged_actions_202608 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202603_transaction_id_idx ON audit.logged_actions_202603 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202607_transaction_id_idx ON audit.logged_actions_202607 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202609_session_user_name_idx ON audit.logged_actions_202609 USING btree (session_user_name COLLATE pg_catalog."default");
+ALTER TABLE audit.logged_actions_202611 ADD CONSTRAINT logged_actions_202611_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202601_profissional_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202609_table_name_idx ON audit.logged_actions_202609 USING btree (table_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202610_boleto_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202607_profissional_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_table_name_idx ON audit.logged_actions_202606 USING btree (table_name COLLATE pg_catalog."default");
+ALTER TABLE audit.logged_actions_202606 ADD CONSTRAINT logged_actions_202606_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202605_certidao_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202607_data_tstamp_idx ON audit.logged_actions_202607 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_row_id_idx ON audit.logged_actions_202603 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_schema_name_idx ON audit.logged_actions_202602 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202610_schema_name_idx ON audit.logged_actions_202610 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202604_schema_name_idx ON audit.logged_actions_202604 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202604_profissional_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202604_art_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_session_user_name_idx ON audit.logged_actions_202601 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202608_action_idx ON audit.logged_actions_202608 USING btree (action ASC NULLS LAST);
+ALTER TABLE audit.logged_actions_202603 ADD CONSTRAINT logged_actions_202603_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202607_boleto_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202605_session_user_name_idx ON audit.logged_actions_202605 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202610_row_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202604_action_idx ON audit.logged_actions_202604 USING btree (action ASC NULLS LAST);
+ALTER TABLE audit.logged_actions_202609 ADD CONSTRAINT logged_actions_202609_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202609_profissional_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'profissional_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_session_user_name_idx ON audit.logged_actions_202611 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202602_empresa_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_pessoa_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_pessoa_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202607_certidao_id_idx ON audit.logged_actions_202607 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_pessoa_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'pessoa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202603_schema_name_idx ON audit.logged_actions_202603 USING btree (schema_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202607_session_user_name_idx ON audit.logged_actions_202607 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202612_boleto_id_idx ON audit.logged_actions_202612 USING BTREE ((row_data->'boleto_id'));
+ALTER TABLE audit.logged_actions_202604 ADD CONSTRAINT logged_actions_202604_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202602_certidao_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'certidao_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202609_action_idx ON audit.logged_actions_202609 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202604_pessoa_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'pessoa_id'));
+ALTER TABLE audit.logged_actions_202612 ADD CONSTRAINT logged_actions_202612_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202609_art_id_idx ON audit.logged_actions_202609 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_boleto_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202601_row_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_transaction_id_idx ON audit.logged_actions_202602 USING btree (transaction_id ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202610_empresa_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_data_tstamp_idx ON audit.logged_actions_202606 USING btree (date(timezone('BRT'::text, action_tstamp_stm)));
+ALTER TABLE audit.logged_actions_202607 ADD CONSTRAINT logged_actions_202607_pkey PRIMARY KEY(event_id);
+CREATE INDEX IF NOT EXISTS logged_actions_202607_action_idx ON audit.logged_actions_202607 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202601_usuario_id_idx ON audit.logged_actions_202601 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202602_boleto_id_idx ON audit.logged_actions_202602 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202611_art_id_idx ON audit.logged_actions_202611 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_art_id_idx ON audit.logged_actions_202610 USING BTREE ((row_data->'art_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_row_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202605_empresa_id_idx ON audit.logged_actions_202605 USING BTREE ((row_data->'empresa_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202608_usuario_id_idx ON audit.logged_actions_202608 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202610_session_user_name_idx ON audit.logged_actions_202610 USING btree (session_user_name COLLATE pg_catalog."default");
+CREATE INDEX IF NOT EXISTS logged_actions_202604_boleto_id_idx ON audit.logged_actions_202604 USING BTREE ((row_data->'boleto_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_usuario_id_idx ON audit.logged_actions_202606 USING BTREE ((row_data->'usuario_id'));
+CREATE INDEX IF NOT EXISTS logged_actions_202606_action_idx ON audit.logged_actions_202606 USING btree (action ASC NULLS LAST);
+CREATE INDEX IF NOT EXISTS logged_actions_202606_session_user_name_idx ON audit.logged_actions_202606 USING btree (session_user_name COLLATE pg_catalog."default");
+
+
+
+
+
+
+

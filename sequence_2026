@@ -336,6 +336,26 @@ CREATE INDEX IF NOT EXISTS logged_actions_202606_action_idx ON audit.logged_acti
 CREATE INDEX IF NOT EXISTS logged_actions_202606_session_user_name_idx ON audit.logged_actions_202606 USING btree (session_user_name COLLATE pg_catalog."default");
 
 
+------------------------------------------------------------------------
+-- CREATE TRIGGERS & ENABLE TRIGGERS
+------------------------------------------------------------------------
+-- TRUNCATE
+select 'DROP TRIGGER IF EXISTS audit_trigger_stm ON '||table_name|| '; CREATE TRIGGER audit_trigger_stm AFTER TRUNCATE ON '||table_name|| ' FOR EACH STATEMENT EXECUTE PROCEDURE audit.if_modified_func(''true''); ALTER TABLE '||table_name||' ENABLE TRIGGER audit_trigger_stm;' 
+from information_schema.tables where table_schema = 'public' and table_name ilike 'tb_%';
+
+-- INSERT/UPDATE/DELETE
+select 'DROP TRIGGER IF EXISTS audit_trigger_stm_row ON '||table_name|| '; CREATE TRIGGER audit_trigger_stm_row AFTER INSERT OR DELETE OR UPDATE ON '||table_name|| ' FOR EACH ROW EXECUTE PROCEDURE audit.if_modified_func(''true''); ALTER TABLE '||table_name||' ENABLE TRIGGER audit_trigger_stm_row;' 
+from information_schema.tables where table_schema = 'public' and table_name ilike 'tb_%';
+
+------------------------------------------------------------------------
+-- ENABLE TRIGGERS
+------------------------------------------------------------------------
+select 'ALTER TABLE '||table_name||' ENABLE TRIGGER audit_trigger_stm;'
+from information_schema.tables where table_schema = 'public' and table_name ilike 'tb_%';
+
+select 'ALTER TABLE '||table_name||' ENABLE TRIGGER audit_trigger_stm_row;'
+from information_schema.tables where table_schema = 'public' and table_name ilike 'tb_%';
+
 
 
 
